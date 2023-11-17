@@ -56,11 +56,12 @@ def transform_cyclical(df):
     :return: The transformed DataFrame.
     """
     # Use day of year: 1-365
-    df['day'] = df['date'].apply(lambda x: int(x.strftime('%j')))
-    df['month_sin'] = df['month'].apply(lambda x: np.sin(2 * np.pi * x / 12))
-    df['month_cos'] = df['month'].apply(lambda x: np.cos(2 * np.pi * x / 12))
-    df['day_sin'] = df['day'].apply(lambda x: np.sin(2 * np.pi * x / 31))
-    df['day_cos'] = df['day'].apply(lambda x: np.cos(2 * np.pi * x / 31))
+    # df['day'] = df['date'].apply(lambda x: int(x.strftime('%j')))
+    df['day'] = df['date']
+    # df['month_sin'] = df['month'].apply(lambda x: np.sin(2 * np.pi * x / 12))
+    # df['month_cos'] = df['month'].apply(lambda x: np.cos(2 * np.pi * x / 12))
+    # df['day_sin'] = df['day'].apply(lambda x: np.sin(2 * np.pi * x / 31))
+    # df['day_cos'] = df['day'].apply(lambda x: np.cos(2 * np.pi * x / 31))
     df['season_sin'] = df['season'].apply(lambda x: np.sin(2 * np.pi * x / 4))
     df['season_cos'] = df['season'].apply(lambda x: np.cos(2 * np.pi * x / 4))
     df = df.drop(columns=['month', 'date', 'season', 'day'])
@@ -77,6 +78,7 @@ def df_to_tensors(df):
     dfs = []
     curr_city = df['citycode'][0]
     curr_city_start = 0
+    desired_seq_len = 15
     # split the dataframe into multiple dataframes by city
     for i, row in df.iterrows():
         if row['citycode'] != curr_city:
@@ -85,12 +87,27 @@ def df_to_tensors(df):
             curr_city_start = i
     dfs.append(df.iloc[curr_city_start:])
 
-    max_len = max([df.shape[0] for df in dfs])
     for i, df in enumerate(dfs):
         dfs[i] = df.drop(columns=['citycode'])
+
+    # split the dataframes into sequences of length desired_seq_len
+    new_dfs = []
+    for i, df in enumerate(dfs):
+        for j in range(0, df.shape[0], desired_seq_len):
+            if j + desired_seq_len > df.shape[0]:
+                break
+            new_dfs.append(df.iloc[j:j + desired_seq_len, :])
+    dfs = new_dfs
+    """
+    max_len = max([df.shape[0] for df in dfs])
     # pad the dataframes to the same length
     for i, df in enumerate(dfs):
         dfs[i] = df.reindex(range(max_len), fill_value=0)
+    min_len = min([df.shape[0] for df in dfs])
+    # truncate the dataframes to the same length
+    for i, df in enumerate(dfs):
+        dfs[i] = df.iloc[:min_len]
+    """
     # convert the dataframes to tensors
     arr = np.array([df.values for df in dfs])
     tens = torch.tensor(arr, dtype=torch.float32)
