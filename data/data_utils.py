@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import torch
+import geopy.distance as distance
+import pickle
 
 
 def load_data(filename):
@@ -65,6 +67,59 @@ def transform_cyclical(df):
     df['season_sin'] = df['season'].apply(lambda x: np.sin(2 * np.pi * x / 4))
     df['season_cos'] = df['season'].apply(lambda x: np.cos(2 * np.pi * x / 4))
     df = df.drop(columns=['month', 'date', 'season', 'day'])
+    return df
+
+
+def build_distance_matrix(data_filename, save_filename=None):
+    """
+    Build a distance matrix from the given DataFrame.
+    Gives the distance between each city.
+    :param df: The DataFrame to build the distance matrix from.
+    :return: A tuple containing the distance matrix and a dictionary
+    mapping city codes to indices in the distance matrix.
+    """
+    if save_filename is not None:
+        try:
+            # Load from file if possible
+            return (torch.load(save_filename + '.tens'),
+                    pickle.load(open(save_filename + '.dict', 'rb')))
+        except FileNotFoundError:
+            pass
+    df = load_data(data_filename)
+    df = df.filter(['citycode', 'longitude', 'latitude'])
+    df = df.drop_duplicates()
+    df = df.reset_index(drop=True)
+    df = df.sort_values(by=['citycode'])
+    tensor = torch.zeros((df.shape[0], df.shape[0]))
+    city_code_dict = {}
+    for i, row in df.iterrows():
+        city_code_dict[row['citycode']] = i
+    for i, row in df.iterrows():
+        for j, row2 in df.iterrows():
+            if i == j:
+                continue
+            if tensor[i][j] != 0:
+                continue
+            city1 = (row['latitude'], row['longitude'])
+            city2 = (row2['latitude'], row2['longitude'])
+            dist = distance.distance(city1, city2).km
+            tensor[i][j] = dist
+            tensor[j][i] = dist
+    if save_filename is not None:
+        # No point in building these every time
+        torch.save(tensor, save_filename + '.tens')
+        pickle.dump(city_code_dict, open(save_filename + '.dict', 'wb'))
+    return (tensor, city_code_dict)
+
+
+def prep_df_for_graph(df):
+    """
+    This function takes a preprocessed dataframe returns a tensor.
+    Each dataframe represents a date and contains the data for all cities.
+    This will make constructing the graphs for each day easier.
+    :param df: The preprocessed dataframe.
+    :return: A tensor of shape (I need to figure it out).
+    """
     return df
 
 
