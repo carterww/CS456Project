@@ -24,16 +24,18 @@ def preprocess_dataframe(df, keep_cols=None):
     :return: The preprocessed DataFrame.
     """
     city = df['citycode']
-    target = df['PM25']
+    old_pms = df.filter(['PM25', 'date', 'citycode']).copy()
+    citycode_dict = make_citycode_dict(df)
     df = df.drop(columns=['cityname', 'year', 'location', 'longitude',
                           'latitude', 'station', 'sunshinehours',
-                          'citycode', 'province', 'PM25'])
+                          'citycode', 'province'])
     if keep_cols is not None:
         df = df[keep_cols]
     # This should be done on a col by col basis, change later
     df.fillna(0, inplace=True)
     # drop cyclical columns and fix them
     cyclic_df = df[['month', 'date', 'season']]
+    date = df['date'].copy()
     df = df.drop(columns=['month', 'day', 'season', 'date'])
     cyclic_df = transform_cyclical(cyclic_df)
     # normalize the data
@@ -41,13 +43,63 @@ def preprocess_dataframe(df, keep_cols=None):
     numeric_features = numeric_features.columns
     df[numeric_features] = df[numeric_features].apply(lambda x: (x - x.mean()) / (x.std()))
     # encode the categorical data
-    categorical_features = df.select_dtypes(include=[np.object])
+    categorical_features = df.select_dtypes(include=['object'])
     categorical_features = categorical_features.columns
     df = pd.get_dummies(df, columns=categorical_features)
     # add the cyclical columns back in
     # also add cityname so it can be split later
-    df = pd.concat([city, df, cyclic_df, target], axis=1)
+    df = pd.concat([city, df, date, cyclic_df], axis=1)
+    # Add target column filled with nas
+    df['target'] = pd.NA
+    # Add new col for tomorrow
+    for i, row in df.iterrows():
+        list_of_tuples = citycode_dict[row['citycode']]
+        target_date = row['date'] + pd.DateOffset(days=1)
+        index = bin_search(list_of_tuples, target_date)
+        if index == -1:
+            df.at[i, 'target'] = pd.NA
+        else:
+            df.at[i, 'target'] = list_of_tuples[index][2]
+
+    df.dropna(inplace=True)
+    df = df.reset_index(drop=True)
     return df
+
+
+def bin_search(arr, target_date):
+    """
+    Perform a binary search on the given array to find the
+    index of the element with the given date.
+    :param arr: The array to search.
+    :param target_date: The date to search for.
+    :return: The index of the element with the given date.
+    """
+    low = 0
+    high = len(arr) - 1
+    while low <= high:
+        mid = (low + high) // 2
+        if arr[mid][1] < target_date:
+            low = mid + 1
+        elif arr[mid][1] > target_date:
+            high = mid - 1
+        else:
+            return mid
+    return -1
+
+def make_citycode_dict(df):
+    """
+    Make a dictionary mapping citycodes to indices in the DataFrame.
+    :param df: The DataFrame to make the dictionary from.
+    :return: The dictionary mapping citycodes to indices in the DataFrame.
+    """
+    citycode_dict = {}
+    for i, row in df.iterrows():
+        if citycode_dict.get(row['citycode']) is None:
+            citycode_dict[row['citycode']] = []
+        citycode_dict[row['citycode']].append((i, row['date'], row['PM25']))
+    for key in citycode_dict.keys():
+        citycode_dict[key].sort(key=lambda x: x[1])
+    return citycode_dict
 
 
 def transform_cyclical(df):
@@ -58,14 +110,9 @@ def transform_cyclical(df):
     :return: The transformed DataFrame.
     """
     # Use day of year: 1-365
-    # df['day'] = df['date'].apply(lambda x: int(x.strftime('%j')))
-    df['day'] = df['date']
-    # df['month_sin'] = df['month'].apply(lambda x: np.sin(2 * np.pi * x / 12))
-    # df['month_cos'] = df['month'].apply(lambda x: np.cos(2 * np.pi * x / 12))
-    # df['day_sin'] = df['day'].apply(lambda x: np.sin(2 * np.pi * x / 31))
-    # df['day_cos'] = df['day'].apply(lambda x: np.cos(2 * np.pi * x / 31))
-    df['season_sin'] = df['season'].apply(lambda x: np.sin(2 * np.pi * x / 4))
-    df['season_cos'] = df['season'].apply(lambda x: np.cos(2 * np.pi * x / 4))
+    df['day'] = df['date'].apply(lambda x: int(x.strftime('%j')))
+    df['day_sin'] = df['day'].apply(lambda x: np.sin(2 * np.pi * x / 31))
+    df['day_cos'] = df['day'].apply(lambda x: np.cos(2 * np.pi * x / 31))
     df = df.drop(columns=['month', 'date', 'season', 'day'])
     return df
 
