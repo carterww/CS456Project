@@ -1,4 +1,5 @@
 import pandas as pd
+import os
 import torch
 from torch.utils.data import Dataset
 import data.data_utils as du
@@ -26,6 +27,9 @@ class PollutionDataset(Dataset):
 class PollutionDatasetGNN(Dataset):
     def __init__(self, path, min_seq_size, max_seq_size, should_cache=True, device=None):
         super(PollutionDatasetGNN, self).__init__()
+        if not os.path.exists('cache') or not os.path.isdir('cache'):
+            os.mkdir('cache')
+
         found_cached = self.load_cached_dataset('cache', str(min_seq_size), str(max_seq_size))
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
