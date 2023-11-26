@@ -20,6 +20,8 @@ class IndependentGru(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size, 1)
         )
+        self.add_module('gru', self.gru)
+        self.add_module('fc', self.fc)
         self.fc = self.fc.to(device)
 
     def forward(self, input, hidden=None):
@@ -27,12 +29,23 @@ class IndependentGru(nn.Module):
         # hidden: (num_layers * num_directions, batch, hidden_size)
         output, hidden = self.gru(input, hidden)
         output = self.fc(output[:, -1, :])
-        return output, hidden
+        return output
+
+    def save(self, path):
+        torch.save(self.state_dict(), path)
+
+    def load(self, path):
+        self.load_state_dict(torch.load(path))
 
     def eval(self):
         self.gru.eval()
         self.fc.eval()
+        return self
 
     def train(self):
         self.gru.train()
         self.fc.train()
+        return self
+
+    def children(self):
+        return self.gru, self.fc
