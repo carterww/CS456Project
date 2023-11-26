@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import torch
+import geopy.distance as distance
 
 
 def load_data(filename):
@@ -22,7 +23,7 @@ def preprocess_dataframe(df, keep_cols=None):
     :return: The preprocessed DataFrame.
     """
     city = df['citycode']
-    old_pms = df.filter(['PM25', 'date', 'citycode']).copy()
+    coords = df[['longitude', 'latitude', 'citycode']]
     citycode_dict = make_citycode_dict(df)
     df = df.drop(columns=['cityname', 'year', 'location', 'longitude',
                           'latitude', 'station', 'sunshinehours',
@@ -46,6 +47,11 @@ def preprocess_dataframe(df, keep_cols=None):
     # add the cyclical columns back in
     # also add cityname so it can be split later
     df = pd.concat([city, df, cyclic_df], axis=1)
+    # add k neighbors
+    distance_matrix, code_to_index, index_to_code = get_disance_matrix(coords)
+    df = add_k_neighbors(df, citycode_dict, distance_matrix, code_to_index, index_to_code)
+    print(df.head())
+    # add the target column
     df['target'] = pd.NA
     for i, row in df.iterrows():
         list_of_tuples = citycode_dict[row['citycode']]
@@ -56,6 +62,65 @@ def preprocess_dataframe(df, keep_cols=None):
     df = df.dropna()
     df = df.reset_index(drop=True)
     return df
+
+
+def add_k_neighbors(df, citycode_dict, distance_matrix, code_to_index, index_to_code, k=0):
+    """
+    Add the k nearest neighbors to each row in the given DataFrame.
+    :param df: The DataFrame to add the neighbors to.
+    :param citycode_dict: The dictionary mapping citycodes to indices
+    in the DataFrame.
+    :param distance_matrix: The matrix containing the distances between
+    each city.
+    :param k: The number of neighbors to add.
+    :return: The DataFrame with the neighbors added.
+    """
+    if k == 0:
+        return df
+    for i, row in df.iterrows():
+        city_distance = distance_matrix[code_to_index[row['citycode']]]
+        city_distance[code_to_index[row['citycode']]] = np.inf
+        for j in range(k):
+            # find the closest city that has not already been added
+            closest_city_index = np.argmin(city_distance)
+            distance = city_distance[closest_city_index]
+            city_distance[closest_city_index] = np.inf
+            closest_city_code = index_to_code[closest_city_index]
+            # find the closest date in the closest city
+            closest_city_dates = citycode_dict[closest_city_code]
+            closest_date_index = bin_search(closest_city_dates, row['date'])
+            if closest_date_index == -1:
+                j -= 1
+                continue
+            # add the closest date's PM25 to the row
+            df.at[i, 'PM25' + str(j + 1)] = closest_city_dates[closest_date_index][2] * (1/distance)
+            df.at[i, 'PM10' + str(j + 1)] = closest_city_dates[closest_date_index][3] * (1/distance)
+    return df
+
+
+
+def get_disance_matrix(df):
+    """
+    Get the matrix containing the distances between each city.
+    :param df: The DataFrame containing the cities.
+    :return: The matrix containing the distances between each city.
+    """
+    citycodes = df['citycode'].unique()
+    distance_matrix = np.zeros((len(citycodes), len(citycodes)))
+    code_to_index = {}
+    index_to_code = {}
+    for i, code in enumerate(citycodes):
+        code_to_index[code] = i
+        index_to_code[i] = code
+    for i, code1 in enumerate(citycodes):
+        for j, code2 in enumerate(citycodes):
+            if i == j:
+                continue
+            city1 = df[df['citycode'] == code1].iloc[0]
+            city2 = df[df['citycode'] == code2].iloc[0]
+            distance_matrix[i][j] = distance.distance((city1['latitude'], city1['longitude']),
+                                                      (city2['latitude'], city2['longitude'])).km
+    return distance_matrix, code_to_index, index_to_code
 
 
 def bin_search(arr, target_date):
@@ -89,7 +154,7 @@ def make_citycode_dict(df):
     for i, row in df.iterrows():
         if citycode_dict.get(row['citycode']) is None:
             citycode_dict[row['citycode']] = []
-        citycode_dict[row['citycode']].append((i, row['date'], row['PM25']))
+        citycode_dict[row['citycode']].append((i, row['date'], row['PM25'], row['PM10']))
     for key in citycode_dict.keys():
         citycode_dict[key].sort(key=lambda x: x[1])
     return citycode_dict
