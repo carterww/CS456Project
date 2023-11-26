@@ -50,11 +50,14 @@ class PollutionDatasetGNN(Dataset):
     def __getitem__(self, idx):
         if type(idx) is not int:
             raise TypeError
+        if self.cached_data[idx] is not None:
+            return self.cached_data[idx]
         df = self.dataframes[idx]
         unique_days_count = df['date'].nunique()
         city_code_count = df['citycode'].nunique()
         city_codes = df['citycode'].unique()
-        x = torch.zeros((unique_days_count, city_code_count, df.shape[1] - 2))
+        codes = torch.zeros((unique_days_count, city_code_count))
+        x = torch.zeros((unique_days_count, city_code_count, df.shape[1] - 3))
         y = torch.zeros((unique_days_count, city_code_count))
         curr_date = df['date'].min()
         for i in range(unique_days_count):
@@ -62,14 +65,15 @@ class PollutionDatasetGNN(Dataset):
                 tmp = df[(df['date'] == curr_date) & (df['citycode'] == city_codes[j])]
                 if tmp.shape[0] == 0:
                     print('Error: no data for city ' + str(city_codes[j]) + ' on date ' + str(curr_date))
-                x[i][j] = torch.tensor(tmp.drop(columns=['date', 'target']).values)
+                codes[i][j] = city_codes[j]
+                x[i][j] = torch.tensor(tmp.drop(columns=['date', 'target', 'citycode']).values)
                 y[i][j] = tmp['target'].values[0]
             curr_date = str(pd.to_datetime(curr_date) + pd.DateOffset(days=1)).split(' ')[0]
         x = x.to(self.device)
         y = y.to(self.device)
         if self.cached_data[idx] is None:
-            self.cached_data[idx] = (x, y)
-        return (x, y)
+            self.cached_data[idx] = (x, y, codes)
+        return (x, y, codes)
 
     def cache_dataset(self, cache_path, min_window_size, max_window_size):
         """
