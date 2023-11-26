@@ -50,7 +50,6 @@ def preprocess_dataframe(df, keep_cols=None):
     # add k neighbors
     distance_matrix, code_to_index, index_to_code = get_disance_matrix(coords)
     df = add_k_neighbors(df, citycode_dict, distance_matrix, code_to_index, index_to_code)
-    print(df.head())
     # add the target column
     df['target'] = pd.NA
     for i, row in df.iterrows():
@@ -166,13 +165,7 @@ def transform_cyclical(df):
     :param df: The DataFrame to transform.
     :return: The transformed DataFrame.
     """
-    # Use day of year: 1-365
-    # df['day'] = df['date'].apply(lambda x: int(x.strftime('%j')))
     df['day'] = df['date']
-    # df['month_sin'] = df['month'].apply(lambda x: np.sin(2 * np.pi * x / 12))
-    # df['month_cos'] = df['month'].apply(lambda x: np.cos(2 * np.pi * x / 12))
-    # df['day_sin'] = df['day'].apply(lambda x: np.sin(2 * np.pi * x / 31))
-    # df['day_cos'] = df['day'].apply(lambda x: np.cos(2 * np.pi * x / 31))
     df['season_sin'] = df['season'].apply(lambda x: np.sin(2 * np.pi * x / 4))
     df['season_cos'] = df['season'].apply(lambda x: np.cos(2 * np.pi * x / 4))
     df = df.drop(columns=['month', 'date', 'season', 'day'])
