@@ -22,31 +22,77 @@ def preprocess_dataframe(df, keep_cols=None):
     :return: The preprocessed DataFrame.
     """
     city = df['citycode']
-    target = df['PM25']
+    old_pms = df.filter(['PM25', 'date', 'citycode']).copy()
+    citycode_dict = make_citycode_dict(df)
     df = df.drop(columns=['cityname', 'year', 'location', 'longitude',
                           'latitude', 'station', 'sunshinehours',
-                          'citycode', 'province', 'PM25'])
+                          'province', 'citycode'])
     if keep_cols is not None:
         df = df[keep_cols]
     # This should be done on a col by col basis, change later
     df.fillna(0, inplace=True)
     # drop cyclical columns and fix them
     cyclic_df = df[['month', 'date', 'season']]
-    df = df.drop(columns=['month', 'day', 'season', 'date'])
+    df = df.drop(columns=['month', 'day', 'season'])
     cyclic_df = transform_cyclical(cyclic_df)
     # normalize the data
     numeric_features = df.select_dtypes(include=[np.number])
     numeric_features = numeric_features.columns
     df[numeric_features] = df[numeric_features].apply(lambda x: (x - x.mean()) / (x.std()))
     # encode the categorical data
-    categorical_features = df.select_dtypes(include=[np.object])
+    categorical_features = df.select_dtypes(include=['object'])
     categorical_features = categorical_features.columns
     df = pd.get_dummies(df, columns=categorical_features)
     # add the cyclical columns back in
     # also add cityname so it can be split later
-    df = pd.concat([city, df, cyclic_df, target], axis=1)
+    df = pd.concat([city, df, cyclic_df], axis=1)
+    df['target'] = pd.NA
+    for i, row in df.iterrows():
+        list_of_tuples = citycode_dict[row['citycode']]
+        target_date = row['date'] + pd.DateOffset(days=1)
+        index = bin_search(list_of_tuples, target_date)
+        if index != -1:
+            df.at[i, 'target'] = list_of_tuples[index][2]
+    df = df.dropna()
+    df = df.reset_index(drop=True)
     return df
 
+
+def bin_search(arr, target_date):
+    """
+    Perform a binary search on the given array to find the
+    index of the element with the given date.
+    :param arr: The array to search.
+    :param target_date: The date to search for.
+    :return: The index of the element with the given date.
+    """
+    low = 0
+    high = len(arr) - 1
+    while low <= high:
+        mid = (low + high) // 2
+        if arr[mid][1] < target_date:
+            low = mid + 1
+        elif arr[mid][1] > target_date:
+            high = mid - 1
+        else:
+            return mid
+    return -1
+
+
+def make_citycode_dict(df):
+    """
+    Make a dictionary mapping citycodes to indices in the DataFrame.
+    :param df: The DataFrame to make the dictionary from.
+    :return: The dictionary mapping citycodes to indices in the DataFrame.
+    """
+    citycode_dict = {}
+    for i, row in df.iterrows():
+        if citycode_dict.get(row['citycode']) is None:
+            citycode_dict[row['citycode']] = []
+        citycode_dict[row['citycode']].append((i, row['date'], row['PM25']))
+    for key in citycode_dict.keys():
+        citycode_dict[key].sort(key=lambda x: x[1])
+    return citycode_dict
 
 def transform_cyclical(df):
     """
@@ -78,7 +124,7 @@ def df_to_tensors(df):
     dfs = []
     curr_city = df['citycode'][0]
     curr_city_start = 0
-    desired_seq_len = 15
+    desired_seq_len = 8
     # split the dataframe into multiple dataframes by city
     for i, row in df.iterrows():
         if row['citycode'] != curr_city:
@@ -93,21 +139,23 @@ def df_to_tensors(df):
     # split the dataframes into sequences of length desired_seq_len
     new_dfs = []
     for i, df in enumerate(dfs):
-        for j in range(0, df.shape[0], desired_seq_len):
-            if j + desired_seq_len > df.shape[0]:
-                break
-            new_dfs.append(df.iloc[j:j + desired_seq_len, :])
+        df.sort_values(by=['date'], inplace=True)
+        df = df.reset_index(drop=True)
+        curr_seq_start = 0
+        prev_date = df['date'][0]
+        for j in range(1, df.shape[0]):
+            if (df['date'][j] - prev_date).days > 1:
+                curr_seq_start = j
+                prev_date = df['date'][j]
+                continue
+            if j - curr_seq_start == desired_seq_len:
+                new_dfs.append(df.iloc[curr_seq_start:j])
+                curr_seq_start = j
+            prev_date = df['date'][j]
     dfs = new_dfs
-    """
-    max_len = max([df.shape[0] for df in dfs])
-    # pad the dataframes to the same length
     for i, df in enumerate(dfs):
-        dfs[i] = df.reindex(range(max_len), fill_value=0)
-    min_len = min([df.shape[0] for df in dfs])
-    # truncate the dataframes to the same length
-    for i, df in enumerate(dfs):
-        dfs[i] = df.iloc[:min_len]
-    """
+        dfs[i] = df.drop(columns=['date'])
+        dfs[i] = dfs[i].astype(np.float32)
     # convert the dataframes to tensors
     arr = np.array([df.values for df in dfs])
     tens = torch.tensor(arr, dtype=torch.float32)

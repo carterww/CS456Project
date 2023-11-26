@@ -28,3 +28,11 @@ class IndependentGru(nn.Module):
         output, hidden = self.gru(input, hidden)
         output = self.fc(output[:, -1, :])
         return output, hidden
+
+    def eval(self):
+        self.gru.eval()
+        self.fc.eval()
+
+    def train(self):
+        self.gru.train()
+        self.fc.train()
